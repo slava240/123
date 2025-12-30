@@ -3,96 +3,158 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GitHub Audio Call</title>
+    <title>Audio Chat MVP</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; }
-        .box { border: 1px solid #ccc; padding: 15px; margin-bottom: 20px; border-radius: 8px; }
-        button { padding: 10px 20px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; }
-        button:disabled { background: #ccc; }
-        input { padding: 10px; width: 70%; }
-        #status { color: green; font-weight: bold; margin-top: 10px;}
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
+        .id-badge { background: #e7f3ff; color: #007bff; padding: 10px; border-radius: 8px; font-weight: bold; margin: 15px 0; word-break: break-all; }
+        input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
+        .controls { display: flex; gap: 10px; justify-content: center; margin-top: 20px; }
+        button { padding: 12px 20px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.3s; }
+        .btn-call { background: #28a745; color: white; flex-grow: 1; }
+        .btn-mute { background: #6c757d; color: white; display: none; }
+        .btn-hangup { background: #dc3545; color: white; display: none; }
+        #status { margin-top: 15px; color: #666; font-size: 0.9em; }
+        #timer { font-size: 1.5em; margin: 10px 0; color: #333; display: none; }
     </style>
 </head>
 <body>
 
-    <h2>📞 Аудио-звонок (P2P)</h2>
+<div class="card">
+    <h2>Аудиосвязь</h2>
+    
+    <div>Ваш ID:</div>
+    <div id="my-id" class="id-badge">Подключение...</div>
 
-    <div class="box">
-        <h3>1. Ваш ID</h3>
-        <p>Скопируйте это и отправьте другу (в Telegram/WhatsApp):</p>
-        <div id="my-id" style="font-weight: bold; font-size: 1.2em;">Генерация...</div>
+    <input type="text" id="friend-id" placeholder="Введите ID друга">
+    
+    <div id="timer">00:00</div>
+    <div id="status">Ожидание сети...</div>
+
+    <div class="controls">
+        <button id="call-btn" class="btn-call">Позвонить</button>
+        <button id="mute-btn" class="btn-mute">Выкл. микрофон</button>
+        <button id="hangup-btn" class="btn-hangup">Сбросить</button>
     </div>
+</div>
 
-    <div class="box">
-        <h3>2. Позвонить другу</h3>
-        <input type="text" id="friend-id" placeholder="Вставьте ID друга сюда">
-        <button id="call-btn">Позвонить 📞</button>
-    </div>
+<audio id="remote-audio" autoplay></audio>
+<audio id="ringtone-audio" loop src="https://www.soundjay.com/phone/phone-calling-1.mp3"></audio>
 
-    <div id="status">Ожидание...</div>
-    <audio id="remote-audio" autoplay></audio>
+<script>
+    const peer = new Peer();
+    let localStream;
+    let currentCall;
+    let timerInterval;
 
-    <script>
-        // Инициализация PeerJS (используем их бесплатный тестовый сервер)
-        const peer = new Peer(); 
+    const el = {
+        myId: document.getElementById('my-id'),
+        friendId: document.getElementById('friend-id'),
+        callBtn: document.getElementById('call-btn'),
+        muteBtn: document.getElementById('mute-btn'),
+        hangupBtn: document.getElementById('hangup-btn'),
+        status: document.getElementById('status'),
+        timer: document.getElementById('timer'),
+        remoteAudio: document.getElementById('remote-audio'),
+        ringtone: document.getElementById('ringtone-audio')
+    };
+
+    // 1. Получаем свой ID
+    peer.on('open', id => {
+        el.myId.innerText = id;
+        el.status.innerText = "Готов к работе";
+    });
+
+    // 2. Логика звонка
+    el.callBtn.addEventListener('click', () => {
+        const id = el.friendId.value;
+        if (!id) return alert("Введите ID!");
+
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+            localStream = stream;
+            const call = peer.call(id, stream);
+            setupCall(call);
+            el.status.innerText = "Звоним...";
+        });
+    });
+
+    // 3. Входящий звонок
+    peer.on('call', call => {
+        el.ringtone.play();
+        if (confirm("Входящий звонок! Ответить?")) {
+            el.ringtone.pause();
+            navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+                localStream = stream;
+                call.answer(stream);
+                setupCall(call);
+            });
+        } else {
+            el.ringtone.pause();
+            call.close();
+        }
+    });
+
+    function setupCall(call) {
+        currentCall = call;
         
-        const myIdEl = document.getElementById('my-id');
-        const friendIdInput = document.getElementById('friend-id');
-        const callBtn = document.getElementById('call-btn');
-        const statusEl = document.getElementById('status');
-        const remoteAudio = document.getElementById('remote-audio');
-
-        // 1. При открытии страницы получаем свой уникальный ID
-        peer.on('open', (id) => {
-            myIdEl.innerText = id;
-            statusEl.innerText = "Готов к подключению. Жду звонка или звоните сами.";
+        call.on('stream', remoteStream => {
+            el.remoteAudio.srcObject = remoteStream;
+            startTimer();
+            el.status.innerText = "Разговор...";
+            el.callBtn.style.display = 'none';
+            el.muteBtn.style.display = 'inline-block';
+            el.hangupBtn.style.display = 'inline-block';
         });
 
-        // 2. Логика "Я звоню кому-то"
-        callBtn.addEventListener('click', () => {
-            const friendId = friendIdInput.value;
-            if (!friendId) return alert("Введите ID друга!");
-
-            statusEl.innerText = "Звоню...";
-            
-            // Запрашиваем доступ к микрофону (video: false - только звук)
-            navigator.mediaDevices.getUserMedia({ video: false, audio: true })
-                .then((stream) => {
-                    // Звоним другу и передаем свой поток (голос)
-                    const call = peer.call(friendId, stream);
-                    
-                    // Когда друг ответит, мы услышим его поток
-                    call.on('stream', (remoteStream) => {
-                        statusEl.innerText = "Соединение установлено! Говорите.";
-                        remoteAudio.srcObject = remoteStream;
-                    });
-                })
-                .catch((err) => {
-                    console.error("Ошибка микрофона:", err);
-                    alert("Нужен доступ к микрофону!");
-                });
+        call.on('close', () => {
+            endCall();
         });
+    }
 
-        // 3. Логика "Мне звонят"
-        peer.on('call', (call) => {
-            if (confirm("Входящий звонок! Ответить?")) {
-                // Получаем доступ к своему микрофону, чтобы ответить
-                navigator.mediaDevices.getUserMedia({ video: false, audio: true })
-                    .then((stream) => {
-                        // Отвечаем на звонок своим потоком
-                        call.answer(stream); 
-                        
-                        // Когда соединились, слушаем собеседника
-                        call.on('stream', (remoteStream) => {
-                            statusEl.innerText = "Разговор идет...";
-                            remoteAudio.srcObject = remoteStream;
-                        });
-                    });
-            } else {
-                statusEl.innerText = "Звонок отклонен.";
-            }
-        });
-    </script>
+    // Кнопка Mute
+    el.muteBtn.addEventListener('click', () => {
+        const enabled = localStream.getAudioTracks()[0].enabled;
+        if (enabled) {
+            localStream.getAudioTracks()[0].enabled = false;
+            el.muteBtn.innerText = "Вкл. микрофон";
+            el.muteBtn.style.background = "#ffc107";
+        } else {
+            localStream.getAudioTracks()[0].enabled = true;
+            el.muteBtn.innerText = "Выкл. микрофон";
+            el.muteBtn.style.background = "#6c757d";
+        }
+    });
+
+    // Кнопка Сбросить
+    el.hangupBtn.addEventListener('click', () => {
+        if (currentCall) currentCall.close();
+        endCall();
+    });
+
+    function endCall() {
+        if (localStream) {
+            localStream.getTracks().forEach(track => track.stop());
+        }
+        clearInterval(timerInterval);
+        el.timer.style.display = 'none';
+        el.status.innerText = "Звонок завершен";
+        el.callBtn.style.display = 'inline-block';
+        el.muteBtn.style.display = 'none';
+        el.hangupBtn.style.display = 'none';
+        el.ringtone.pause();
+    }
+
+    function startTimer() {
+        let sec = 0;
+        el.timer.style.display = 'block';
+        timerInterval = setInterval(() => {
+            sec++;
+            let m = Math.floor(sec / 60).toString().padStart(2, '0');
+            let s = (sec % 60).toString().padStart(2, '0');
+            el.timer.innerText = `${m}:${s}`;
+        }, 1000);
+    }
+</script>
 </body>
 </html>
