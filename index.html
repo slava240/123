@@ -3,145 +3,133 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Messenger 0.1</title>
+    <title>Group Audio Messenger</title>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-    
     <style>
-        body { font-family: sans-serif; background: #f4f4f9; display: flex; justify-content: center; padding: 20px; }
-        .messenger-card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 100%; max-width: 350px; text-align: center; }
-        .my-id-block { font-size: 2em; font-weight: bold; color: #007bff; margin: 10px 0; }
-        input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; text-align: center; }
-        button { width: 100%; padding: 12px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; margin-bottom: 5px; }
-        .btn-call { background: #28a745; color: white; }
-        .btn-hangup { background: #dc3545; color: white; display: none; }
-        #status { font-size: 0.8em; color: #666; margin-top: 10px; }
+        body { font-family: sans-serif; background: #eceff1; display: flex; justify-content: center; padding: 20px; }
+        .card { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 8px 20px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
+        .my-id { color: #007bff; font-weight: bold; font-size: 1.2em; margin-bottom: 15px; }
+        input { width: 80%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 8px; }
+        .btn { padding: 12px 25px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; width: 85%; margin: 5px; }
+        .btn-join { background: #007bff; color: white; }
+        .btn-exit { background: #dc3545; color: white; display: none; }
+        #status { font-size: 0.9em; color: #555; margin-top: 15px; }
+        #participants { margin-top: 10px; font-size: 0.8em; color: #888; }
     </style>
 </head>
 <body>
 
-<div class="messenger-card">
-    <h3>Ваш постоянный ID:</h3>
-    <div id="my-id" class="my-id-block">...</div>
+<div class="card">
+    <h2>Групповой чат</h2>
+    <div class="my-id">Ваш ID: <span id="my-id-val">...</span></div>
     
-    <input type="number" id="friend-id" placeholder="Введите номер друга (0, 1, 2...)">
+    <input type="number" id="room-input" placeholder="Номер комнаты (напр. 10)">
     
-    <button id="call-btn" class="btn-call">Позвонить 📞</button>
-    <button id="hangup-btn" class="btn-hangup">Завершить ❌</button>
+    <button id="join-btn" class="btn btn-join">Войти в комнату 🎧</button>
+    <button id="exit-btn" class="btn btn-exit">Выйти ❌</button>
 
-    <div id="status">Загрузка системы...</div>
+    <div id="status">Загрузка...</div>
+    <div id="participants">В комнате: 0</div>
 </div>
 
-<audio id="remote-audio" autoplay></audio>
-<audio id="ringtone" loop src="https://www.soundjay.com/phone/phone-calling-1.mp3"></audio>
+<div id="remote-audios"></div>
 
 <script>
-    // --- 2. НАСТРОЙКА FIREBASE ---
-    // ЗАМЕНИТЕ ЭТИ ДАННЫЕ НА СВОИ ИЗ КОНСОЛИ FIREBASE!
+    // --- КОНФИГ FIREBASE (Вставьте свой!) ---
     const firebaseConfig = {
         apiKey: "AIzaSyAYzOcE7_ALO5xSJF-sq48Fc2YKgRdERDE",
         databaseURL: "https://dombase-1cbd8-default-rtdb.firebaseio.com",
         projectId: "dombase-1cbd8",
     };
-    
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
 
-    // Элементы интерфейса
-    const myIdDisplay = document.getElementById('my-id');
-    const friendIdInput = document.getElementById('friend-id');
-    const callBtn = document.getElementById('call-btn');
-    const hangupBtn = document.getElementById('hangup-btn');
-    const status = document.getElementById('status');
-    const remoteAudio = document.getElementById('remote-audio');
-    const ringtone = document.getElementById('ringtone');
+    const el = {
+        myId: document.getElementById('my-id-val'),
+        roomInput: document.getElementById('room-input'),
+        joinBtn: document.getElementById('join-btn'),
+        exitBtn: document.getElementById('exit-btn'),
+        status: document.getElementById('status'),
+        participants: document.getElementById('participants'),
+        remoteContainer: document.getElementById('remote-audios')
+    };
 
-    let peer;
-    let localStream;
-    let currentCall;
+    let peer, localStream, myUserNum, currentRoom;
+    let peersInRoom = {}; // Храним активные звонки
 
-    // --- 3. ЛОГИКА ПОРЯДКОВОГО ID ---
-    async function initIdentity() {
+    // 1. Получаем постоянный ID
+    async function init() {
         let savedID = localStorage.getItem('messenger_user_num');
-        
         if (!savedID) {
-            status.innerText = "Регистрация нового ID...";
-            const counterRef = db.ref('usersCount');
-            const result = await counterRef.transaction(current => (current || 0) + 1);
+            const result = await db.ref('usersCount').transaction(c => (c || 0) + 1);
             savedID = (result.snapshot.val() - 1).toString();
             localStorage.setItem('messenger_user_num', savedID);
         }
+        myUserNum = savedID;
+        el.myId.innerText = myUserNum;
         
-        myIdDisplay.innerText = savedID;
-        startPeer(savedID);
+        peer = new Peer('group-app-' + myUserNum);
+        peer.on('open', () => el.status.innerText = "Готов к подключению");
+        
+        // Слушаем входящие звонки от других участников группы
+        peer.on('call', call => {
+            navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+                call.answer(stream);
+                handleCall(call);
+            });
+        });
     }
 
-    // --- 4. ЗАПУСК СВЯЗИ ---
-    function startPeer(idNum) {
-        status.innerText = "Подключение к сети...";
-        // Используем префикс, чтобы PeerJS было проще работать
-        peer = new Peer('messenger-app-' + idNum);
+    // 2. Вход в комнату
+    el.joinBtn.onclick = async () => {
+        currentRoom = el.roomInput.value;
+        if (!currentRoom) return alert("Введите номер комнаты!");
 
-        peer.on('open', () => {
-            status.innerText = "В сети. Готов к звонку.";
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        // Регистрируем себя в комнате в Firebase
+        const roomRef = db.ref(`rooms/${currentRoom}/${myUserNum}`);
+        roomRef.set(true);
+        roomRef.onDisconnect().remove(); // Удалить нас, если вкладка закроется
+
+        // Следим за участниками комнаты
+        db.ref(`rooms/${currentRoom}`).on('value', snapshot => {
+            const users = snapshot.val() || {};
+            const ids = Object.keys(users);
+            el.participants.innerText = "В комнате: " + ids.length;
+
+            ids.forEach(userId => {
+                if (userId !== myUserNum && !peersInRoom[userId]) {
+                    // Звоним новому участнику
+                    const call = peer.call('group-app-' + userId, localStream);
+                    handleCall(call, userId);
+                    peersInRoom[userId] = true;
+                }
+            });
         });
 
-        // Обработка входящего звонка
-        peer.on('call', call => {
-            ringtone.play();
-            if (confirm("Входящий звонок от пользователя! Ответить?")) {
-                ringtone.pause();
-                navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-                    localStream = stream;
-                    call.answer(stream);
-                    handleCall(call);
-                });
-            } else {
-                ringtone.pause();
-                call.close();
+        el.joinBtn.style.display = 'none';
+        el.exitBtn.style.display = 'block';
+        el.status.innerText = "Вы в комнате " + currentRoom;
+    };
+
+    function handleCall(call, userId) {
+        call.on('stream', remoteStream => {
+            if (!document.getElementById('audio-' + call.peer)) {
+                const audio = document.createElement('audio');
+                audio.id = 'audio-' + call.peer;
+                audio.srcObject = remoteStream;
+                audio.autoplay = true;
+                el.remoteContainer.appendChild(audio);
             }
         });
     }
 
-    // Логика исходящего звонка
-    callBtn.onclick = () => {
-        const targetId = friendIdInput.value;
-        if (!targetId) return alert("Введите ID!");
+    el.exitBtn.onclick = () => location.reload();
 
-        status.innerText = "Вызов пользователя " + targetId + "...";
-        navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-            localStream = stream;
-            const call = peer.call('messenger-app-' + targetId, stream);
-            handleCall(call);
-        });
-    };
-
-    function handleCall(call) {
-        currentCall = call;
-        call.on('stream', remoteStream => {
-            remoteAudio.srcObject = remoteStream;
-            status.innerText = "Разговор установлен";
-            callBtn.style.display = 'none';
-            hangupBtn.style.display = 'block';
-        });
-
-        call.on('close', () => {
-            location.reload(); // Простой способ сбросить всё состояние
-        });
-    }
-
-    hangupBtn.onclick = () => {
-        if (currentCall) currentCall.close();
-        location.reload();
-    };
-
-    // Запуск всего процесса
-    initIdentity().catch(err => {
-        console.error(err);
-        status.innerText = "Ошибка Firebase. Проверьте конфиг!";
-    });
-
+    init();
 </script>
 </body>
 </html>
