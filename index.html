@@ -3,41 +3,70 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Group Audio Messenger</title>
+    <title>Universal Messenger</title>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { font-family: sans-serif; background: #eceff1; display: flex; justify-content: center; padding: 20px; }
-        .card { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 8px 20px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
-        .my-id { color: #007bff; font-weight: bold; font-size: 1.2em; margin-bottom: 15px; }
-        input { width: 80%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 8px; }
-        .btn { padding: 12px 25px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; width: 85%; margin: 5px; }
-        .btn-join { background: #007bff; color: white; }
-        .btn-exit { background: #dc3545; color: white; display: none; }
-        #status { font-size: 0.9em; color: #555; margin-top: 15px; }
-        #participants { margin-top: 10px; font-size: 0.8em; color: #888; }
+        body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; display: flex; justify-content: center; padding: 20px; }
+        .app-container { background: white; padding: 20px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }
+        .header { text-align: center; margin-bottom: 20px; }
+        .my-id-label { font-size: 0.8em; color: #666; }
+        .my-id-num { font-size: 1.8em; font-weight: bold; color: #007bff; }
+        
+        .tabs { display: flex; margin-bottom: 20px; background: #eee; border-radius: 10px; padding: 5px; }
+        .tab { flex: 1; padding: 10px; text-align: center; cursor: pointer; border-radius: 8px; transition: 0.3s; }
+        .tab.active { background: white; box-shadow: 0 2px 5px rgba(0,0,0,0.1); font-weight: bold; }
+
+        .mode-content { display: none; }
+        .mode-content.active { display: block; }
+
+        input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 10px; box-sizing: border-box; font-size: 1em; }
+        .btn { width: 100%; padding: 15px; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; font-size: 1em; transition: 0.2s; margin-top: 5px; }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-danger { background: #dc3545; color: white; margin-top: 10px; }
+        
+        #status-bar { font-size: 0.85em; color: #888; text-align: center; margin-top: 15px; padding: 10px; border-top: 1px solid #eee; }
+        .call-active { animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
     </style>
 </head>
 <body>
 
-<div class="card">
-    <h2>Групповой чат</h2>
-    <div class="my-id">Ваш ID: <span id="my-id-val">...</span></div>
-    
-    <input type="number" id="room-input" placeholder="Номер комнаты (напр. 10)">
-    
-    <button id="join-btn" class="btn btn-join">Войти в комнату 🎧</button>
-    <button id="exit-btn" class="btn btn-exit">Выйти ❌</button>
+<div class="app-container">
+    <div class="header">
+        <div class="my-id-label">Ваш постоянный номер</div>
+        <div id="my-id-display" class="my-id-num">...</div>
+    </div>
 
-    <div id="status">Загрузка...</div>
-    <div id="participants">В комнате: 0</div>
+    <div class="tabs">
+        <div class="tab active" onclick="switchTab('private')">Личный</div>
+        <div class="tab" onclick="switchTab('group')">Группа</div>
+    </div>
+
+    <div id="mode-private" class="mode-content active">
+        <input type="number" id="direct-id-input" placeholder="Номер абонента">
+        <button id="call-direct-btn" class="btn btn-primary">Позвонить 📞</button>
+    </div>
+
+    <div id="mode-group" class="mode-content">
+        <input type="number" id="room-id-input" placeholder="Номер комнаты (0-999)">
+        <button id="join-group-btn" class="btn btn-primary">Войти в комнату 🎧</button>
+        <div id="group-info" style="margin-top:10px; font-size:0.8em; color:#666; display:none;">
+            В комнате участников: <span id="participants-count">0</span>
+        </div>
+    </div>
+
+    <button id="hangup-btn" class="btn btn-danger" style="display:none;">Завершить связь</button>
+    
+    <div id="status-bar">Система загружается...</div>
 </div>
 
 <div id="remote-audios"></div>
+<audio id="ringtone" loop src="https://www.soundjay.com/phone/phone-calling-1.mp3"></audio>
 
 <script>
-    // --- КОНФИГ FIREBASE (Вставьте свой!) ---
+    // --- КОНФИГ FIREBASE ---
     const firebaseConfig = {
         apiKey: "AIzaSyAYzOcE7_ALO5xSJF-sq48Fc2YKgRdERDE",
         databaseURL: "https://dombase-1cbd8-default-rtdb.firebaseio.com",
@@ -46,88 +75,116 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
 
-    const el = {
-        myId: document.getElementById('my-id-val'),
-        roomInput: document.getElementById('room-input'),
-        joinBtn: document.getElementById('join-btn'),
-        exitBtn: document.getElementById('exit-btn'),
-        status: document.getElementById('status'),
-        participants: document.getElementById('participants'),
-        remoteContainer: document.getElementById('remote-audios')
-    };
+    let myUserNum, peer, localStream;
+    let activeCalls = {}; // Для групп
+    let currentCall;    // Для личных
+    let isGroupMode = false;
 
-    let peer, localStream, myUserNum, currentRoom;
-    let peersInRoom = {}; // Храним активные звонки
-
-    // 1. Получаем постоянный ID
-    async function init() {
-        let savedID = localStorage.getItem('messenger_user_num');
-        if (!savedID) {
-            const result = await db.ref('usersCount').transaction(c => (c || 0) + 1);
-            savedID = (result.snapshot.val() - 1).toString();
-            localStorage.setItem('messenger_user_num', savedID);
+    // Переключение вкладок
+    function switchTab(mode) {
+        if (localStream) return alert("Сначала завершите текущий звонок!");
+        document.querySelectorAll('.tab, .mode-content').forEach(el => el.classList.remove('active'));
+        if (mode === 'private') {
+            document.querySelector('.tab:nth-child(1)').classList.add('active');
+            document.getElementById('mode-private').classList.add('active');
+            isGroupMode = false;
+        } else {
+            document.querySelector('.tab:nth-child(2)').classList.add('active');
+            document.getElementById('mode-group').classList.add('active');
+            isGroupMode = true;
         }
-        myUserNum = savedID;
-        el.myId.innerText = myUserNum;
-        
-        peer = new Peer('group-app-' + myUserNum);
-        peer.on('open', () => el.status.innerText = "Готов к подключению");
-        
-        // Слушаем входящие звонки от других участников группы
-        peer.on('call', call => {
-            navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-                call.answer(stream);
-                handleCall(call);
-            });
-        });
     }
 
-    // 2. Вход в комнату
-    el.joinBtn.onclick = async () => {
-        currentRoom = el.roomInput.value;
-        if (!currentRoom) return alert("Введите номер комнаты!");
-
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Инициализация ID
+    async function init() {
+        let id = localStorage.getItem('messenger_id');
+        if (!id) {
+            const result = await db.ref('usersCount').transaction(c => (c || 0) + 1);
+            id = (result.snapshot.val() - 1).toString();
+            localStorage.setItem('messenger_id', id);
+        }
+        myUserNum = id;
+        document.getElementById('my-id-display').innerText = myUserNum;
         
-        // Регистрируем себя в комнате в Firebase
-        const roomRef = db.ref(`rooms/${currentRoom}/${myUserNum}`);
-        roomRef.set(true);
-        roomRef.onDisconnect().remove(); // Удалить нас, если вкладка закроется
+        peer = new Peer('msg-v3-' + myUserNum);
+        peer.on('open', () => document.getElementById('status-bar').innerText = "Готов к работе");
 
-        // Следим за участниками комнаты
-        db.ref(`rooms/${currentRoom}`).on('value', snapshot => {
-            const users = snapshot.val() || {};
-            const ids = Object.keys(users);
-            el.participants.innerText = "В комнате: " + ids.length;
-
-            ids.forEach(userId => {
-                if (userId !== myUserNum && !peersInRoom[userId]) {
-                    // Звоним новому участнику
-                    const call = peer.call('group-app-' + userId, localStream);
-                    handleCall(call, userId);
-                    peersInRoom[userId] = true;
-                }
-            });
-        });
-
-        el.joinBtn.style.display = 'none';
-        el.exitBtn.style.display = 'block';
-        el.status.innerText = "Вы в комнате " + currentRoom;
-    };
-
-    function handleCall(call, userId) {
-        call.on('stream', remoteStream => {
-            if (!document.getElementById('audio-' + call.peer)) {
-                const audio = document.createElement('audio');
-                audio.id = 'audio-' + call.peer;
-                audio.srcObject = remoteStream;
-                audio.autoplay = true;
-                el.remoteContainer.appendChild(audio);
+        // Обработка любого входящего вызова
+        peer.on('call', call => {
+            const isIncomingGroup = call.metadata && call.metadata.isGroup;
+            
+            if (isIncomingGroup || confirm("Входящий личный звонок! Ответить?")) {
+                document.getElementById('ringtone').pause();
+                navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+                    localStream = stream;
+                    call.answer(stream);
+                    handleStream(call);
+                    showHangup();
+                });
             }
         });
     }
 
-    el.exitBtn.onclick = () => location.reload();
+    // ЛИЧНЫЙ ЗВОНОК
+    document.getElementById('call-direct-btn').onclick = async () => {
+        const target = document.getElementById('direct-id-input').value;
+        if (!target) return;
+        
+        document.getElementById('status-bar').innerText = "Вызов...";
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const call = peer.call('msg-v3-' + target, localStream, { metadata: { isGroup: false } });
+        handleStream(call);
+        showHangup();
+    };
+
+    // ГРУППОВОЙ ЗВОНОК
+    document.getElementById('join-group-btn').onclick = async () => {
+        const room = document.getElementById('room-id-input').value;
+        if (!room) return;
+
+        isGroupMode = true;
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        showHangup();
+        document.getElementById('group-info').style.display = 'block';
+
+        const roomRef = db.ref(`rooms/${room}/${myUserNum}`);
+        roomRef.set(true);
+        roomRef.onDisconnect().remove();
+
+        db.ref(`rooms/${room}`).on('value', snapshot => {
+            const users = snapshot.val() || {};
+            document.getElementById('participants-count').innerText = Object.keys(users).length;
+
+            Object.keys(users).forEach(userId => {
+                if (userId !== myUserNum && !activeCalls[userId]) {
+                    const call = peer.call('msg-v3-' + userId, localStream, { metadata: { isGroup: true } });
+                    handleStream(call);
+                    activeCalls[userId] = call;
+                }
+            });
+        });
+    };
+
+    function handleStream(call) {
+        call.on('stream', stream => {
+            if (!document.getElementById('audio-' + call.peer)) {
+                const audio = document.createElement('audio');
+                audio.id = 'audio-' + call.peer;
+                audio.srcObject = stream;
+                audio.autoplay = true;
+                document.getElementById('remote-audios').appendChild(audio);
+            }
+        });
+        currentCall = call;
+    }
+
+    function showHangup() {
+        document.getElementById('hangup-btn').style.display = 'block';
+        document.getElementById('status-bar').innerText = "Связь активна";
+        document.getElementById('status-bar').classList.add('call-active');
+    }
+
+    document.getElementById('hangup-btn').onclick = () => location.reload();
 
     init();
 </script>
