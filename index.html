@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Audio Call</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; }
+        .box { border: 1px solid #ccc; padding: 15px; margin-bottom: 20px; border-radius: 8px; }
+        button { padding: 10px 20px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; }
+        button:disabled { background: #ccc; }
+        input { padding: 10px; width: 70%; }
+        #status { color: green; font-weight: bold; margin-top: 10px;}
+    </style>
+</head>
+<body>
+
+    <h2>📞 Аудио-звонок (P2P)</h2>
+
+    <div class="box">
+        <h3>1. Ваш ID</h3>
+        <p>Скопируйте это и отправьте другу (в Telegram/WhatsApp):</p>
+        <div id="my-id" style="font-weight: bold; font-size: 1.2em;">Генерация...</div>
+    </div>
+
+    <div class="box">
+        <h3>2. Позвонить другу</h3>
+        <input type="text" id="friend-id" placeholder="Вставьте ID друга сюда">
+        <button id="call-btn">Позвонить 📞</button>
+    </div>
+
+    <div id="status">Ожидание...</div>
+    <audio id="remote-audio" autoplay></audio>
+
+    <script>
+        // Инициализация PeerJS (используем их бесплатный тестовый сервер)
+        const peer = new Peer(); 
+        
+        const myIdEl = document.getElementById('my-id');
+        const friendIdInput = document.getElementById('friend-id');
+        const callBtn = document.getElementById('call-btn');
+        const statusEl = document.getElementById('status');
+        const remoteAudio = document.getElementById('remote-audio');
+
+        // 1. При открытии страницы получаем свой уникальный ID
+        peer.on('open', (id) => {
+            myIdEl.innerText = id;
+            statusEl.innerText = "Готов к подключению. Жду звонка или звоните сами.";
+        });
+
+        // 2. Логика "Я звоню кому-то"
+        callBtn.addEventListener('click', () => {
+            const friendId = friendIdInput.value;
+            if (!friendId) return alert("Введите ID друга!");
+
+            statusEl.innerText = "Звоню...";
+            
+            // Запрашиваем доступ к микрофону (video: false - только звук)
+            navigator.mediaDevices.getUserMedia({ video: false, audio: true })
+                .then((stream) => {
+                    // Звоним другу и передаем свой поток (голос)
+                    const call = peer.call(friendId, stream);
+                    
+                    // Когда друг ответит, мы услышим его поток
+                    call.on('stream', (remoteStream) => {
+                        statusEl.innerText = "Соединение установлено! Говорите.";
+                        remoteAudio.srcObject = remoteStream;
+                    });
+                })
+                .catch((err) => {
+                    console.error("Ошибка микрофона:", err);
+                    alert("Нужен доступ к микрофону!");
+                });
+        });
+
+        // 3. Логика "Мне звонят"
+        peer.on('call', (call) => {
+            if (confirm("Входящий звонок! Ответить?")) {
+                // Получаем доступ к своему микрофону, чтобы ответить
+                navigator.mediaDevices.getUserMedia({ video: false, audio: true })
+                    .then((stream) => {
+                        // Отвечаем на звонок своим потоком
+                        call.answer(stream); 
+                        
+                        // Когда соединились, слушаем собеседника
+                        call.on('stream', (remoteStream) => {
+                            statusEl.innerText = "Разговор идет...";
+                            remoteAudio.srcObject = remoteStream;
+                        });
+                    });
+            } else {
+                statusEl.innerText = "Звонок отклонен.";
+            }
+        });
+    </script>
+</body>
+</html>
